@@ -154,6 +154,7 @@ def test_switch_strategy():
 
     assert load_balancer.strategy == BalancingStrategy.LEAST_LOADED
 
+
 import time
 
 
@@ -224,5 +225,3 @@ def test_get_cached_workers_respects_ttl_when_no_workers_available(monkeypatch):
     load_balancer._get_cached_workers()
 
     assert load_balancer.worker_registry.get_available_workers.call_count == 1
-
-    
