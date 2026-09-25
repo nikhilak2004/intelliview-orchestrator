@@ -153,3 +153,76 @@ def test_switch_strategy():
     load_balancer.switch_strategy(BalancingStrategy.LEAST_LOADED)
 
     assert load_balancer.strategy == BalancingStrategy.LEAST_LOADED
+
+import time
+
+
+def test_get_cached_workers_uses_cache_within_ttl(monkeypatch):
+    """Within the TTL window, the registry should only be queried once."""
+    workers_v1 = [{"worker_id": "worker-1", "active_tasks": 0, "capacity": 4}]
+
+    load_balancer = LoadBalancer(
+        strategy=BalancingStrategy.LEAST_LOADED, worker_registry=MagicMock()
+    )
+    load_balancer.worker_registry.get_available_workers.return_value = workers_v1
+
+    fake_time = [1000.0]
+    monkeypatch.setattr(time, "time", lambda: fake_time[0])
+
+    first = load_balancer._get_cached_workers()
+    fake_time[0] += 1  # still well within the default 5s TTL
+    second = load_balancer._get_cached_workers()
+
+    assert first == workers_v1
+    assert second == workers_v1
+    assert load_balancer.worker_registry.get_available_workers.call_count == 1
+
+
+def test_get_cached_workers_refreshes_after_ttl_expires(monkeypatch):
+    """Once the TTL elapses, the cache should be refreshed from the registry,
+    reflecting newly available/unavailable workers."""
+    workers_v1 = [{"worker_id": "worker-1", "active_tasks": 0, "capacity": 4}]
+    workers_v2 = [{"worker_id": "worker-2", "active_tasks": 0, "capacity": 4}]
+
+    load_balancer = LoadBalancer(
+        strategy=BalancingStrategy.LEAST_LOADED, worker_registry=MagicMock()
+    )
+    load_balancer.worker_registry.get_available_workers.side_effect = [
+        workers_v1,
+        workers_v2,
+    ]
+
+    fake_time = [1000.0]
+    monkeypatch.setattr(time, "time", lambda: fake_time[0])
+
+    first = load_balancer._get_cached_workers()
+    fake_time[0] += load_balancer._cache_ttl + 1  # past the TTL
+    second = load_balancer._get_cached_workers()
+
+    assert first == workers_v1
+    assert second == workers_v2
+    assert load_balancer.worker_registry.get_available_workers.call_count == 2
+
+
+def test_get_cached_workers_respects_ttl_when_no_workers_available(monkeypatch):
+    """Regression test for the duplicate implementation this issue removed:
+    one version used `not self._worker_cache`, which treats an empty list as
+    'uninitialized' and forces a registry lookup on every call. The TTL must
+    still be respected even when zero workers are currently available."""
+    load_balancer = LoadBalancer(
+        strategy=BalancingStrategy.LEAST_LOADED, worker_registry=MagicMock()
+    )
+    load_balancer.worker_registry.get_available_workers.return_value = []
+
+    fake_time = [1000.0]
+    monkeypatch.setattr(time, "time", lambda: fake_time[0])
+
+    load_balancer._get_cached_workers()
+    fake_time[0] += 1
+    load_balancer._get_cached_workers()
+    fake_time[0] += 1
+    load_balancer._get_cached_workers()
+
+    assert load_balancer.worker_registry.get_available_workers.call_count == 1
+
+    

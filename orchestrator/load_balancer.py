@@ -64,11 +64,6 @@ class LoadBalancer:
         self._wrr_current_weights: dict[str, int] = {}
         self._wrr_lock = Lock()
 
-        self._worker_cache = None
-        self._cache_timestamp = 0.0
-        self._cache_ttl = 5.0
-        self._registry_lookup_count = 0
-
         logger.info(f"Load Balancer initialized with strategy: {strategy.value}")
 
     def select_worker(self) -> dict[str, Any] | None:
@@ -261,7 +256,14 @@ class LoadBalancer:
         return best
 
     def _get_cached_workers(self) -> list[dict[str, Any]]:
-        """Return available workers using a short-lived cache."""
+        """
+        Return available workers using a short-lived cache.
+
+        The cache is refreshed when it hasn't been populated yet (None)
+        or once its TTL has elapsed. An empty result (no workers
+        currently available) is a valid cached state, not an "unset"
+        one, so the TTL is still respected during zero-worker periods.
+        """
         current_time = time.time()
 
         if (
@@ -274,26 +276,6 @@ class LoadBalancer:
                 f"Refreshing worker cache (Registry Lookup #{self._registry_lookup_count})"
             )
 
-            self._worker_cache = self.worker_registry.get_available_workers()
-            self._cache_timestamp = current_time
-
-        return self._worker_cache
-
-    def _get_cached_workers(self) -> list[dict[str, Any]]:
-        """
-        Return cached workers if cache is still valid.
-        """
-        current_time = time.time()
-
-        if (
-            not self._worker_cache
-            or current_time - self._cache_timestamp > self._cache_ttl
-        ):
-            self._registry_lookup_count += 1
-
-            logger.debug(
-                f"Refreshing worker cache (Registry Lookup #{self._registry_lookup_count})"
-            )
             self._worker_cache = self.worker_registry.get_available_workers()
             self._cache_timestamp = current_time
 
